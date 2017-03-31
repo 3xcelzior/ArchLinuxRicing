@@ -1,0 +1,72 @@
+#! /bin/sh
+
+if xdo id -a "$PANEL_WM_NAME" > /dev/null ; then
+	printf "%s\n" "The panel is already running." >&2
+	exit 1
+fi
+
+trap 'trap - TERM; kill 0' INT TERM QUIT EXIT
+
+[ -e "$PANEL_FIFO" ] && rm "$PANEL_FIFO"
+mkfifo "$PANEL_FIFO"
+
+bspc config top_padding $PANEL_HEIGHT
+bspc subscribe report > "$PANEL_FIFO" &
+xtitle -sf 'T%s\n' > "$PANEL_FIFO" &
+clock -sf 'S%a %H:%M' > "$PANEL_FIFO" &
+
+# battery
+while true;
+do
+BAT_LEVEL_0=$(upower -i /org/freedesktop/UPower/devices/battery_BAT1 | grep "percentage" | sed 's/\s//g' | cut -d: -f2 | sed 's/%//')
+BAT_LEVEL_1=$(upower -i /org/freedesktop/UPower/devices/battery_BAT0 | grep "percentage" | sed 's/\s//g' | cut -d: -f2 | sed 's/%//')
+echo 'B BAT: ' $BAT_LEVEL_1'% | '
+sleep 30;
+done > "$PANEL_FIFO" &
+
+# alsa volume
+while true;
+do
+ALSA_VOLUME=$(amixer -c 1 get Master | grep 'Mono: Playback' | grep -o '...%' | sed 's/\[//' | sed 's/%//' | sed 's/ //')
+ALSA_STATE=$(amixer -c 1 get Master | grep 'Mono: Playback' | grep -o '\[on]')
+
+if [ $ALSA_STATE ]
+then
+  echo V' VOL: ' $ALSA_VOLUME'% | '
+  else
+    echo V' VOL: MUTE | '
+  fi
+  sleep 0.1
+done > $PANEL_FIFO &
+
+# wifi
+while true;
+do
+WIFI_SSID=$(iw wlp4s0 link | grep 'SSID' | sed 's/SSID: //' | sed 's/\t//')
+##WIFI_SIGNAL=$(iw wlp4s0 link | grep 'signal' | sed 's/signal: //' | sed 's/ dBm//' | sed 's/\t//')
+echo L'' $WIFI_SSID ' | '
+  sleep 10
+done > $PANEL_FIFO &
+
+# music
+while true;
+do
+ALBUM_NAME=$(mpc | head -n1)  
+echo R $ALBUM_NAME ' | '
+sleep 1
+done > $PANEL_FIFO &
+
+. panel_colors
+
+panel_bar < "$PANEL_FIFO" | lemonbar -a 32 -n "$PANEL_WM_NAME" -g 1880x20+20+10 -f "$PANEL_FONT" -F "$COLOR_DEFAULT_FG" -B "$COLOR_DEFAULT_BG" | sh &
+
+wid=$(xdo id -a "$PANEL_WM_NAME")
+tries_left=20
+while [ -z "$wid" -a "$tries_left" -gt 0 ] ; do
+	sleep 0.05
+	wid=$(xdo id -a "$PANEL_WM_NAME")
+	tries_left=$((tries_left - 1))
+done
+[ -n "$wid" ] && xdo above -t "$(xdo id -N Bspwm -n root | sort | head -n 1)" "$wid"
+
+wait
